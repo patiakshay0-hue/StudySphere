@@ -11,6 +11,7 @@ import {
   api,
   ApiError,
   setAuthToken,
+  setUnauthorizedHandler,
   getAuthToken,
   type AppConfig,
   type FileItem,
@@ -147,6 +148,17 @@ export function AppProvider({ children }: { children: ReactNode }) {
   );
 
   const clearWelcome = useCallback(() => setJustAuthed(false), []);
+
+  // Any 401 from an authenticated call → clear session and return to login.
+  useEffect(() => {
+    setUnauthorizedHandler(() => {
+      applyUser(null);
+      setFiles([]);
+      setScopeId(null);
+      toast("Your session ended — please log in again.", true);
+    });
+    return () => setUnauthorizedHandler(null);
+  }, [applyUser, toast]);
 
   // Load public config once.
   useEffect(() => {

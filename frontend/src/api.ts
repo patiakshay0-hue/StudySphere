@@ -109,6 +109,13 @@ export class ApiError extends Error {
   }
 }
 
+// Called when any authenticated request returns 401 (token expired/invalid or
+// the account no longer exists) so the app can cleanly return to the login screen.
+let onUnauthorized: (() => void) | null = null;
+export function setUnauthorizedHandler(fn: (() => void) | null) {
+  onUnauthorized = fn;
+}
+
 async function request<T>(path: string, opts: RequestInit = {}): Promise<T> {
   const headers = new Headers(opts.headers);
   if (token) headers.set("Authorization", "Bearer " + token);
@@ -119,6 +126,14 @@ async function request<T>(path: string, opts: RequestInit = {}): Promise<T> {
       detail = (await res.json()).detail || detail;
     } catch {
       /* ignore */
+    }
+    // A 401 on a normal endpoint means the session is no longer valid — drop it
+    // and let the app show the login screen. (Login/signup 401s are real
+    // "wrong credentials" errors and must NOT trigger a global logout.)
+    const isAuthAttempt = path.includes("/auth/login") || path.includes("/auth/signup");
+    if (res.status === 401 && !isAuthAttempt) {
+      setAuthToken(null);
+      onUnauthorized?.();
     }
     throw new ApiError(detail, res.status);
   }

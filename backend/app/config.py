@@ -3,15 +3,18 @@ import os
 import secrets
 from pathlib import Path
 
+BACKEND_DIR = Path(__file__).resolve().parent.parent
+ROOT_DIR = BACKEND_DIR.parent
+
+# Load .env from the backend directory by ABSOLUTE path, so config (and the JWT
+# secret in particular) is identical no matter which working directory the
+# server was started from.
 try:
     from dotenv import load_dotenv
 
-    load_dotenv()
+    load_dotenv(BACKEND_DIR / ".env")
 except Exception:
     pass
-
-BACKEND_DIR = Path(__file__).resolve().parent.parent
-ROOT_DIR = BACKEND_DIR.parent
 
 # Data dir is configurable so production can point it at a persistent volume.
 DATA_DIR = Path(os.getenv("STUDYSPHERE_DATA_DIR") or (BACKEND_DIR / "data"))
