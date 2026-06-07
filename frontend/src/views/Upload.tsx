@@ -12,9 +12,12 @@ export default function Upload() {
   const [drag, setDrag] = useState(false);
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   async function doUpload() {
     if (!file) return toast("Please choose a file first.", true);
+    setError(null);
+    setResult(null);
     const fd = new FormData();
     fd.append("file", file);
     fd.append("semester", semester);
@@ -31,11 +34,19 @@ export default function Upload() {
       setFile(null);
       refreshFiles();
     } catch (e) {
-      toast((e as Error).message, true);
+      const raw = (e as Error).message || "Upload failed.";
+      // Network/proxy failure → the request never reached the server.
+      const friendly = /failed to fetch|networkerror|load failed|fetch/i.test(raw)
+        ? "Couldn't reach the server. Refresh the page and try again (make sure the app is running)."
+        : raw;
+      setError(friendly);
+      toast(friendly, true);
     } finally {
       setBusy(false);
     }
   }
+
+  const sizeMB = file ? file.size / (1024 * 1024) : 0;
 
   return (
     <div className="card">
@@ -71,7 +82,9 @@ export default function Upload() {
           <p>
             <strong>Click to browse</strong> or drag &amp; drop a file
           </p>
-          <span className="muted">{file ? file.name : "No file selected"}</span>
+          <span className="muted">
+            {file ? `${file.name} · ${sizeMB.toFixed(1)} MB` : "No file selected"}
+          </span>
         </div>
       </div>
 
@@ -119,6 +132,11 @@ export default function Upload() {
       </button>
 
       {result && <div className="result-box">{result}</div>}
+      {error && (
+        <div className="result-box" style={{ background: "var(--red-soft)", color: "var(--red-dark)" }}>
+          ⚠ {error}
+        </div>
+      )}
     </div>
   );
 }

@@ -1,8 +1,10 @@
 """Document ingestion: extract text from PDF / DOCX / TXT and split it into
 overlapping, page-aware chunks suitable for retrieval.
 """
+import io
 import os
 import tempfile
+import zipfile
 from typing import List, Optional, Tuple
 
 import docx2txt
@@ -10,36 +12,75 @@ import pdfplumber
 from fastapi import UploadFile
 from pptx import Presentation
 
-SUPPORTED = {"pdf", "docx", "doc", "txt", "md", "pptx"}
+SUPPORTED = {"pdf", "docx", "pptx", "txt", "md"}
 
 CHUNK_SIZE = 900
 CHUNK_OVERLAP = 150
 
 
-async def extract_pages(file: UploadFile) -> Tuple[List[Tuple[Optional[int], str]], str]:
-    """Return ``([(page_no, text), ...], suffix)`` for an uploaded file.
+def _detect_kind(content: bytes, ext: str) -> Optional[str]:
+    """Determine the real file type from its content (magic bytes), falling back
+    to the extension. Returns 'pdf' | 'docx' | 'pptx' | 'txt' | 'ole' | None.
 
-    ``page_no`` is the 1-based PDF page; it is ``None`` for formats without
-    pages (DOCX/TXT), where the whole document is treated as one logical page.
+    This makes uploads robust to misleading names like ``notes.docx.pdf``.
+    """
+    head = content[:8]
+    if head[:4] == b"%PDF":
+        return "pdf"
+    if head[:4] == b"PK\x03\x04":  # ZIP container = Office Open XML (docx/pptx/xlsx)
+        try:
+            names = zipfile.ZipFile(io.BytesIO(content)).namelist()
+            if any(n.startswith("word/") for n in names):
+                return "docx"
+            if any(n.startswith("ppt/") for n in names):
+                return "pptx"
+            if any(n.startswith("xl/") for n in names):
+                return None  # xlsx not supported
+        except zipfile.BadZipFile:
+            return None
+        return None
+    if head[:4] == b"\xD0\xCF\x11\xE0":  # legacy OLE (.doc/.ppt/.xls)
+        return "ole"
+    # Plain text?
+    try:
+        content[:4096].decode("utf-8")
+        return "txt"
+    except UnicodeDecodeError:
+        return "txt" if ext in {"txt", "md"} else None
+
+
+async def extract_pages(file: UploadFile) -> Tuple[List[Tuple[Optional[int], str]], str]:
+    """Return ``([(page_no, text), ...], kind)`` for an uploaded file.
+
+    ``page_no`` is the 1-based page/slide for PDF/PPTX; ``None`` for DOCX/TXT.
+    The file type is detected from the *content*, not the filename extension.
     """
     content = await file.read()
-    suffix = (file.filename or "").lower().rsplit(".", 1)[-1]
-    if suffix not in SUPPORTED:
+    name = file.filename or "document"
+    ext = name.lower().rsplit(".", 1)[-1] if "." in name else ""
+
+    kind = _detect_kind(content, ext)
+    if kind == "ole":
         raise ValueError(
-            f"Unsupported file type '.{suffix}'. Supported: {', '.join(sorted(SUPPORTED))}."
+            "Old .doc/.ppt format isn't supported. Please re-save as .docx, .pptx, or PDF and upload again."
+        )
+    if kind is None:
+        raise ValueError(
+            "Couldn't read this file. Supported types: PDF, DOCX, PPTX, TXT, MD. "
+            "(Tip: if it's a Word/PowerPoint file, make sure it isn't corrupted or password-protected.)"
         )
 
     tmp_path = None
     try:
-        with tempfile.NamedTemporaryFile(delete=False, suffix=f".{suffix}") as tmp:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=f".{kind}") as tmp:
             tmp.write(content)
             tmp_path = tmp.name
 
-        if suffix == "pdf":
+        if kind == "pdf":
             pages = _extract_pdf(tmp_path)
-        elif suffix == "pptx":
+        elif kind == "pptx":
             pages = _extract_pptx(tmp_path)
-        elif suffix in {"docx", "doc"}:
+        elif kind == "docx":
             pages = [(None, _extract_docx(tmp_path))]
         else:  # txt / md
             pages = [(None, content.decode("utf-8", errors="ignore"))]
@@ -49,8 +90,10 @@ async def extract_pages(file: UploadFile) -> Tuple[List[Tuple[Optional[int], str
 
     pages = [(p, t) for p, t in pages if t and t.strip()]
     if not pages:
-        raise ValueError("No readable text could be extracted from this file.")
-    return pages, suffix
+        raise ValueError(
+            "No readable text could be extracted — the file may be scanned images, empty, or password-protected."
+        )
+    return pages, kind
 
 
 def _extract_pdf(path: str) -> List[Tuple[Optional[int], str]]:
