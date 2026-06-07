@@ -9,6 +9,7 @@ import {
 } from "react";
 import {
   api,
+  ApiError,
   setAuthToken,
   getAuthToken,
   type AppConfig,
@@ -16,6 +17,22 @@ import {
   type Mode,
   type User,
 } from "./api";
+
+const USER_KEY = "ss_user";
+
+function loadCachedUser(): User | null {
+  try {
+    const raw = localStorage.getItem(USER_KEY);
+    return raw ? (JSON.parse(raw) as User) : null;
+  } catch {
+    return null;
+  }
+}
+
+function cacheUser(u: User | null) {
+  if (u) localStorage.setItem(USER_KEY, JSON.stringify(u));
+  else localStorage.removeItem(USER_KEY);
+}
 
 interface ToastMsg {
   id: number;
@@ -58,9 +75,18 @@ export function useApp(): AppContextValue {
 }
 
 export function AppProvider({ children }: { children: ReactNode }) {
-  const [user, setUserState] = useState<User | null>(null);
+  // Restore the cached user instantly so a refresh keeps you signed in.
+  const [user, setUserState] = useState<User | null>(() =>
+    getAuthToken() ? loadCachedUser() : null
+  );
   const [authReady, setAuthReady] = useState(false);
   const [justAuthed, setJustAuthed] = useState(false);
+
+  // Keep React state and the localStorage cache in sync.
+  const applyUser = useCallback((u: User | null) => {
+    setUserState(u);
+    cacheUser(u);
+  }, []);
   const [config, setConfig] = useState<AppConfig | null>(null);
   const [mode, setMode] = useState<Mode>("offline");
   const [files, setFiles] = useState<FileItem[]>([]);
@@ -88,36 +114,36 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const refreshUser = useCallback(() => {
     if (!getAuthToken()) return;
-    api.me().then(setUserState).catch(() => {});
-  }, []);
+    api.me().then(applyUser).catch(() => {});
+  }, [applyUser]);
 
-  const setUser = useCallback((u: User) => setUserState(u), []);
+  const setUser = useCallback((u: User) => applyUser(u), [applyUser]);
 
   const logout = useCallback(() => {
     setAuthToken(null);
-    setUserState(null);
+    applyUser(null);
     setFiles([]);
     setScopeId(null);
-  }, []);
+  }, [applyUser]);
 
   const login = useCallback(
     async (email: string, password: string) => {
       const { token, user } = await api.login(email, password);
       setAuthToken(token);
-      setUserState(user);
+      applyUser(user);
       setJustAuthed(true);
     },
-    []
+    [applyUser]
   );
 
   const signup = useCallback(
     async (name: string, email: string, password: string) => {
       const { token, user } = await api.signup(name, email, password);
       setAuthToken(token);
-      setUserState(user);
+      applyUser(user);
       setJustAuthed(true);
     },
-    []
+    [applyUser]
   );
 
   const clearWelcome = useCallback(() => setJustAuthed(false), []);
@@ -127,18 +153,25 @@ export function AppProvider({ children }: { children: ReactNode }) {
     api.config().then(setConfig).catch(() => {});
   }, []);
 
-  // Restore session from a stored token.
+  // Validate/refresh the session on boot. Only log out on a genuine 401
+  // (invalid/expired token); transient errors (offline, server restarting)
+  // keep the cached session so a refresh doesn't kick you out.
   useEffect(() => {
-    if (getAuthToken()) {
-      api
-        .me()
-        .then(setUserState)
-        .catch(() => setAuthToken(null))
-        .finally(() => setAuthReady(true));
-    } else {
+    if (!getAuthToken()) {
       setAuthReady(true);
+      return;
     }
-  }, []);
+    api
+      .me()
+      .then(applyUser)
+      .catch((e) => {
+        if (e instanceof ApiError && e.status === 401) {
+          setAuthToken(null);
+          applyUser(null);
+        }
+      })
+      .finally(() => setAuthReady(true));
+  }, [applyUser]);
 
   // Load files whenever a user becomes available.
   useEffect(() => {

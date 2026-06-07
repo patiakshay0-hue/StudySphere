@@ -39,7 +39,7 @@ if not JWT_SECRET:
         JWT_SECRET = secrets.token_hex(32)
         _secret_file.write_text(JWT_SECRET, encoding="utf-8")
 JWT_ALGO = "HS256"
-JWT_EXPIRES_DAYS = 7
+JWT_EXPIRES_DAYS = 30
 
 # --- Payments (Razorpay) ---------------------------------------------------- #
 RAZORPAY_KEY_ID = os.getenv("RAZORPAY_KEY_ID", "").strip()
