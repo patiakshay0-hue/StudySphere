@@ -123,7 +123,14 @@ async function request<T>(path: string, opts: RequestInit = {}): Promise<T> {
   if (!res.ok) {
     let detail = res.statusText;
     try {
-      detail = (await res.json()).detail || detail;
+      const body = await res.json();
+      // FastAPI validation errors (422) return an array of {msg,...}; flatten
+      // to a readable sentence instead of "[object Object]".
+      if (Array.isArray(body.detail)) {
+        detail = body.detail.map((d: { msg?: string }) => d.msg || "Invalid input").join("; ");
+      } else if (body.detail) {
+        detail = body.detail;
+      }
     } catch {
       /* ignore */
     }

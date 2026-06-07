@@ -81,6 +81,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     getAuthToken() ? loadCachedUser() : null
   );
   const [authReady, setAuthReady] = useState(false);
+  const authReadyRef = useRef(false);
   const [justAuthed, setJustAuthed] = useState(false);
 
   // Keep React state and the localStorage cache in sync.
@@ -150,12 +151,16 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const clearWelcome = useCallback(() => setJustAuthed(false), []);
 
   // Any 401 from an authenticated call → clear session and return to login.
+  // Only show a toast if the user was actively using the app; on initial boot
+  // a leftover/expired token is cleared silently (no scary message on login).
   useEffect(() => {
     setUnauthorizedHandler(() => {
       applyUser(null);
       setFiles([]);
       setScopeId(null);
-      toast("Your session ended — please log in again.", true);
+      if (authReadyRef.current) {
+        toast("Your session ended — please log in again.", true);
+      }
     });
     return () => setUnauthorizedHandler(null);
   }, [applyUser, toast]);
@@ -169,8 +174,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // (invalid/expired token); transient errors (offline, server restarting)
   // keep the cached session so a refresh doesn't kick you out.
   useEffect(() => {
-    if (!getAuthToken()) {
+    const done = () => {
+      authReadyRef.current = true;
       setAuthReady(true);
+    };
+    if (!getAuthToken()) {
+      done();
       return;
     }
     api
@@ -182,13 +191,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
           applyUser(null);
         }
       })
-      .finally(() => setAuthReady(true));
+      .finally(done);
   }, [applyUser]);
 
-  // Load files whenever a user becomes available.
+  // Load files once auth is confirmed and a user is present.
   useEffect(() => {
-    if (user) refreshFiles();
-  }, [user, refreshFiles]);
+    if (authReady && user) refreshFiles();
+  }, [authReady, user, refreshFiles]);
 
   // If online mode is unavailable on the server, force offline.
   useEffect(() => {
