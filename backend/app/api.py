@@ -27,7 +27,9 @@ from app.services.loader import chunk_pages, extract_pages, full_text
 from app.services.vector_store import store
 
 api_router = APIRouter()
-_bearer = HTTPBearer(auto_error=True)
+# auto_error=False so a *missing* token returns a uniform 401 (not 403), which
+# the frontend treats as "session ended" and routes back to login.
+_bearer = HTTPBearer(auto_error=False)
 
 
 # --------------------------------------------------------------------------- #
@@ -36,6 +38,8 @@ _bearer = HTTPBearer(auto_error=True)
 def get_current_user(
     creds: HTTPAuthorizationCredentials = Depends(_bearer),
 ) -> dict:
+    if creds is None:
+        raise HTTPException(status_code=401, detail="Not authenticated. Please log in.")
     try:
         user_id = security.decode_token(creds.credentials)
     except jwt.PyJWTError:

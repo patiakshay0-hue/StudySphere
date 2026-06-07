@@ -8,8 +8,9 @@ from typing import List, Optional, Tuple
 import docx2txt
 import pdfplumber
 from fastapi import UploadFile
+from pptx import Presentation
 
-SUPPORTED = {"pdf", "docx", "doc", "txt", "md"}
+SUPPORTED = {"pdf", "docx", "doc", "txt", "md", "pptx"}
 
 CHUNK_SIZE = 900
 CHUNK_OVERLAP = 150
@@ -36,6 +37,8 @@ async def extract_pages(file: UploadFile) -> Tuple[List[Tuple[Optional[int], str
 
         if suffix == "pdf":
             pages = _extract_pdf(tmp_path)
+        elif suffix == "pptx":
+            pages = _extract_pptx(tmp_path)
         elif suffix in {"docx", "doc"}:
             pages = [(None, _extract_docx(tmp_path))]
         else:  # txt / md
@@ -62,6 +65,26 @@ def _extract_pdf(path: str) -> List[Tuple[Optional[int], str]]:
 
 def _extract_docx(path: str) -> str:
     return docx2txt.process(path) or ""
+
+
+def _extract_pptx(path: str) -> List[Tuple[Optional[int], str]]:
+    """Extract text per slide, treating each slide as a page."""
+    out: List[Tuple[Optional[int], str]] = []
+    prs = Presentation(path)
+    for i, slide in enumerate(prs.slides, start=1):
+        parts: List[str] = []
+        for shape in slide.shapes:
+            if shape.has_text_frame and shape.text_frame.text.strip():
+                parts.append(shape.text_frame.text)
+            if shape.has_table:
+                for row in shape.table.rows:
+                    cells = [c.text for c in row.cells if c.text.strip()]
+                    if cells:
+                        parts.append(" | ".join(cells))
+        text = "\n".join(parts)
+        if text.strip():
+            out.append((i, text))
+    return out
 
 
 def chunk_pages(

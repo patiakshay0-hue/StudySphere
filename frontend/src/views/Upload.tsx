@@ -41,7 +41,7 @@ export default function Upload() {
     <div className="card">
       <h2>Upload Study Material</h2>
       <p className="muted">
-        Supported: PDF, DOCX, TXT, MD. Files are chunked, indexed, and made
+        Supported: PDF, DOCX, PPTX, TXT, MD. Files are chunked, indexed, and made
         searchable instantly.
       </p>
 
@@ -62,7 +62,7 @@ export default function Upload() {
         <input
           ref={inputRef}
           type="file"
-          accept=".pdf,.docx,.doc,.txt,.md"
+          accept=".pdf,.docx,.doc,.pptx,.txt,.md"
           hidden
           onChange={(e) => setFile(e.target.files?.[0] ?? null)}
         />
